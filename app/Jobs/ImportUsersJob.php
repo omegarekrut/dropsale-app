@@ -21,6 +21,7 @@ class ImportUsersJob implements ShouldQueue
 
     private const API_ENDPOINT = 'https://randomuser.me/api/?results=';
     private const BATCH_SIZE = 1000;
+    private const SLEEP_TIME = 1;
 
     /**
      * Create a new job instance.
@@ -36,20 +37,27 @@ class ImportUsersJob implements ShouldQueue
     public function handle(): void
     {
         $usersFromApi = $this->fetchUsersInBatches(5000);
+
         $results = $this->updateOrAddUsers($usersFromApi);
+        $this->logResults($results);
 
-        Log::info('updateOrAddUsers returned:', $results);
+        $this->recordJobResults($results);
+    }
 
-        $addedCount = $results['totalInserts'] ?? 0;
-        $updatedCount = $results['totalUpdates'] ?? 0;
+    private function logResults(array $results): void
+    {
+        Log::info('ImportUsersJob results:', $results);
+    }
 
+    private function recordJobResults(array $results): void
+    {
         DB::table('job_results')->insert([
             'type' => 'user_import',
             'status' => 'completed',
             'data' => json_encode([
                 'total' => SpecialUser::count(),
-                'added' => $addedCount,
-                'updated' => $updatedCount
+                'added' => $results['totalInserts'],
+                'updated' => $results['totalUpdates']
             ])
         ]);
     }
