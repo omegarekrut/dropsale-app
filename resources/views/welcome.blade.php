@@ -28,11 +28,30 @@
 </div>
 
 <script>
+    let intervalId = null;
+
     const importButton = document.getElementById('importButton');
     const loadingIndicator = document.getElementById('loadingIndicator');
 
+    const fetchImportResults = async () => {
+        try {
+            const resultResponse = await fetch('/api/job-results/user-import');
+            const resultData = await resultResponse.json();
+
+            if (resultData && resultData.total !== undefined) {
+                document.getElementById('totalUsers').innerText = resultData.total;
+                document.getElementById('addedUsers').innerText = resultData.added;
+                document.getElementById('updatedUsers').innerText = resultData.updated;
+                clearInterval(intervalId); // Stop polling once we have results
+                loadingIndicator.classList.add('hidden');
+                importButton.removeAttribute('disabled');
+            }
+        } catch (error) {
+            console.error("Error fetching import results:", error);
+        }
+    };
+
     importButton.addEventListener('click', async () => {
-        // Disable the button and show the loading indicator
         importButton.setAttribute('disabled', 'disabled');
         loadingIndicator.classList.remove('hidden');
 
@@ -42,15 +61,10 @@
                 throw new Error('Server responded with a non-200 status');
             }
 
-            const data = await response.json();
-
-            document.getElementById('totalUsers').innerText = data.total;
-            document.getElementById('addedUsers').innerText = data.added;
-            document.getElementById('updatedUsers').innerText = data.updated;
+            // Start polling for results after initiating the import
+            intervalId = setInterval(fetchImportResults, 5000); // Poll every 5 seconds
         } catch (error) {
             console.error("Error importing users:", error);
-        } finally {
-            // Hide the loading indicator and re-enable the button
             loadingIndicator.classList.add('hidden');
             importButton.removeAttribute('disabled');
         }
