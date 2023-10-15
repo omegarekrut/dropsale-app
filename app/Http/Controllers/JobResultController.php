@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\DB;
 
 class JobResultController extends Controller
 {
-    public function getUserImportResult()
+    public function getUserImportResult(): \Illuminate\Http\JsonResponse
     {
         $result = DB::table('job_results')
             ->where('type', 'user_import')

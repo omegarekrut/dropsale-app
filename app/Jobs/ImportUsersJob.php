@@ -9,11 +9,11 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Collection;
 
 class ImportUsersJob implements ShouldQueue
 {
@@ -36,7 +36,12 @@ class ImportUsersJob implements ShouldQueue
     public function handle(): void
     {
         $usersFromApi = $this->fetchUsersInBatches(5000);
-        [$addedCount, $updatedCount] = $this->updateOrAddUsers($usersFromApi);
+        $results = $this->updateOrAddUsers($usersFromApi);
+
+        Log::info('updateOrAddUsers returned:', $results);
+
+        $addedCount = $results['totalInserts'] ?? 0;
+        $updatedCount = $results['totalUpdates'] ?? 0;
 
         DB::table('job_results')->insert([
             'type' => 'user_import',
@@ -77,7 +82,34 @@ class ImportUsersJob implements ShouldQueue
 
     private function updateOrAddUsers(array $usersFromApi): array
     {
+        $processedUsers = $this->processAndFilterUsers($usersFromApi);
+
+        $totalInserts = 0;
+        $totalUpdates = 0;
+
+        foreach (array_chunk($processedUsers, 500) as $chunk) {
+            $existingChunkUsers = $this->fetchExistingUsersByEmail(array_column($chunk, 'email'));
+
+            $result = $this->partitionUsersBasedOnExistence($chunk, $existingChunkUsers);
+            $toInsert = $result['toInsert'];
+            $toUpdate = $result['toUpdate'];
+
+            $totalUpdates += $this->handleUserUpdates($toUpdate);
+            $totalInserts += $this->handleUserInsertions($toInsert);
+        }
+
+        Log::info('Returning from updateOrAddUsers', ['totalInserts' => $totalInserts, 'totalUpdates' => $totalUpdates]);
+
+        return [
+            'totalInserts' => $totalInserts,
+            'totalUpdates' => $totalUpdates
+        ];
+    }
+
+    private function processAndFilterUsers(array $usersFromApi): array
+    {
         $processedUsers = array_map([$this, 'extractUserData'], $usersFromApi);
+
         $filteredUsers = array_filter($processedUsers);
 
         $latestUsers = [];
@@ -86,39 +118,36 @@ class ImportUsersJob implements ShouldQueue
             $latestUsers[$user['email']] = $user;
         }
 
-        $filteredUsers = array_values($latestUsers);
+        return array_values($latestUsers);
+    }
 
-        $totalInserts = 0;
-        $totalUpdates = 0;
+    private function fetchExistingUsersByEmail(array $emails): Collection
+    {
+        return SpecialUser::whereIn('email', $emails)->pluck('email')->flip();
+    }
 
-        foreach (array_chunk($filteredUsers, 500) as $chunk) {
-            $existingChunkUsers = SpecialUser::whereIn('email', array_column($chunk, 'email'))
-                ->pluck('email')
-                ->flip();
+    private function handleUserUpdates(array $toUpdate): int
+    {
+        $this->bulkUpdate($toUpdate);
+        return count($toUpdate);
+    }
 
-            $toInsert = [];
-            $toUpdate = [];
+    private function handleUserInsertions(array $toInsert): int
+    {
+        $this->bulkInsert($toInsert);
+        return count($toInsert);
+    }
 
-            foreach ($chunk as $userData) {
-                if (isset($existingChunkUsers[$userData['email']])) {
-                    $toUpdate[] = $userData;
-                } else {
-                    $toInsert[] = $userData;
-                }
+    private function partitionUsersBasedOnExistence(array $users, $existingUsers): array
+    {
+        return array_reduce($users, function ($carry, $user) use ($existingUsers) {
+            if (isset($existingUsers[$user['email']])) {
+                $carry['toUpdate'][] = $user;
+            } else {
+                $carry['toInsert'][] = $user;
             }
-
-            if ($toUpdate) {
-                $this->bulkUpdate($toUpdate);
-                $totalUpdates += count($toUpdate);
-            }
-
-            if ($toInsert) {
-                $this->bulkInsert($toInsert);
-                $totalInserts += count($toInsert);
-            }
-        }
-
-        return [$totalInserts, $totalUpdates];
+            return $carry;
+        }, ['toInsert' => [], 'toUpdate' => []]);
     }
 
     private function bulkUpdate(array $toUpdate): void
@@ -166,17 +195,5 @@ class ImportUsersJob implements ShouldQueue
             'email' => $user['email'],
             'age' => (int) $user['dob']['age'],
         ];
-    }
-
-    private function partitionUsersBasedOnExistence(array $users, $existingUsers): array
-    {
-        return array_reduce($users, function ($carry, $user) use ($existingUsers) {
-            if (isset($existingUsers[$user['email']])) {
-                $carry['toUpdate'][] = $user;
-            } else {
-                $carry['toInsert'][] = $user;
-            }
-            return $carry;
-        }, ['toInsert' => [], 'toUpdate' => []]);
     }
 }

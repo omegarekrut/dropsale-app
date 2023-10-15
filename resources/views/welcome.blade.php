@@ -3,6 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>Import 5000 users</title>
     @vite('resources/css/app.css')
 </head>
@@ -42,7 +43,7 @@
                 document.getElementById('totalUsers').innerText = resultData.total;
                 document.getElementById('addedUsers').innerText = resultData.added;
                 document.getElementById('updatedUsers').innerText = resultData.updated;
-                clearInterval(intervalId); // Stop polling once we have results
+                clearInterval(intervalId);
                 loadingIndicator.classList.add('hidden');
                 importButton.removeAttribute('disabled');
             }
@@ -56,13 +57,17 @@
         loadingIndicator.classList.remove('hidden');
 
         try {
-            const response = await fetch('/import-users');
+            const response = await fetch('/import-users', {
+                method: 'POST',
+                headers: {
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                }
+            });
             if (!response.ok) {
                 throw new Error('Server responded with a non-200 status');
             }
 
-            // Start polling for results after initiating the import
-            intervalId = setInterval(fetchImportResults, 5000); // Poll every 5 seconds
+            intervalId = setInterval(fetchImportResults, 5000);
         } catch (error) {
             console.error("Error importing users:", error);
             loadingIndicator.classList.add('hidden');

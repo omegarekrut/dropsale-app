@@ -18,5 +18,6 @@ Route::get('/', function () {
     return view('welcome');
 });
 
-Route::get('/import-users', [UserController::class, 'importUsers']);
+Route::post('/import-users', [UserController::class, 'importUsers']);
+
 
